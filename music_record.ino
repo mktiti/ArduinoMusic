@@ -9,6 +9,7 @@
 #define PLAYBACK_SPEED_PIN A2
 #define BEEP_SPEED_PIN 9
 
+#define LOOP_LED_PIN 7
 #define PLAY_LED_PIN 8
 #define RECORD_LED_PIN 9
 
@@ -43,6 +44,7 @@ enum MenuElem { PLAY, VS_PLAY, PLAY_LOOP, VS_PLAY_LOOP, RECORD };
 
 struct MenuState {
   long unsigned int lastUpdate;
+  unsigned char state; // top 3 bits => prev selected elem, lowest bit => blink state (0 = LOW, 1 = HIGH)
 };
 
 union State {
@@ -84,6 +86,7 @@ void setup() {
   recordTone.begin(RECORD_BUZZER_PIN);
   echoTone.begin(ECHO_BUZZER_PIN);
 
+  pinMode(LOOP_LED_PIN, OUTPUT);
   pinMode(PLAY_LED_PIN, OUTPUT);
   pinMode(RECORD_LED_PIN, OUTPUT);
 
@@ -130,6 +133,12 @@ MenuElem getMenuElem() {
   return static_cast<MenuElem>(map(analogRead(PLAYBACK_SPEED_PIN), 0, 1024, 0, MENU_ELEM_COUNT));
 }
 
+void setLed(char led) {
+  digitalWrite(LOOP_LED_PIN, LOOP_LED_PIN == led ? HIGH : LOW);
+  digitalWrite(PLAY_LED_PIN, PLAY_LED_PIN == led ? HIGH : LOW);
+  digitalWrite(RECORD_LED_PIN, RECORD_LED_PIN == led ? HIGH : LOW);
+}
+
 void onMenuButton() {
   if (mode == MENU) {
     MenuElem selectedElem = getMenuElem();
@@ -153,10 +162,12 @@ void onMenuButton() {
           .prevFreq = 0,
           .currentFreq = 0
         };
+        setLed(RECORD_LED_PIN);
         break;
     }
 
     if (selectedElem != RECORD) {
+      setLed(toLed(selectedElem));
       state.playback = {
         .currentElem = 0,
         .currentStart = 0
@@ -169,13 +180,42 @@ void onMenuButton() {
 
 void loadMenu() {
   mode = MENU;
-  state.menu = { .lastUpdate = millis() };
+  state.menu = {
+    .lastUpdate = millis(),
+    .state = -1
+   };
   recordTone.stop();
+
+  setLed(-1);
 }
 
 char* menuNames[] = { "PLAY", "VS PLAY", "LOOP", "VS LOOP", "RECORD" };
 
+char toLed(MenuElem elem) {
+  switch(elem) {
+    case PLAY: case VS_PLAY:
+      return PLAY_LED_PIN;
+    case PLAY_LOOP: case VS_PLAY_LOOP:
+      return LOOP_LED_PIN;
+    case RECORD:
+      return RECORD_LED_PIN;
+  }
+}
+
 void renderMenu() {
+  MenuElem selectedElem = getMenuElem();
+  long unsigned int time = millis();
+
+  if (selectedElem != (state.menu.state >> 5)) {
+    state.menu.state = (selectedElem << 5) | 1;
+    state.menu.lastUpdate = time;
+    setLed(toLed(selectedElem));
+  } else if (time - state.menu.lastUpdate > 500 && (selectedElem != PLAY && selectedElem != PLAY_LOOP)) {
+    state.menu.state ^= 1;
+    state.menu.lastUpdate = time;
+    setLed((state.menu.state & 1) ? toLed(selectedElem) : -1);
+  }
+
   Serial.print("Menu state: ");
   Serial.println(menuNames[getMenuElem()]);
 }
